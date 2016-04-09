@@ -2,12 +2,14 @@
 #### TODO (kykim)
 * ~~ Listing All Rooms ~~
 * ~~ Listing All Participants ~~
+* ~~ Host page 처리 - Remote 접속하는 애들 Grid로 보여주기 ~~
+* ~~ Eject 했을때 깔끔하게 처리 ~~
+* ~~ Eject 후 Refresh 하면 Session List 남아있는 버그 수정 ~~
+* Host가 Leave하면 Client에서 Session List가 제대로 업데이트 안되는 버그 수정
+* Video quality를 낮게 바꿔주기
+* Session List는 항상 보여주기 (fod debug)
 * Auto broadcast start using uniq ID (Phone #, FB Email or XXX)
 * Join randomly for rooms as swipe
-* Host page 처리 - Remote 접속하는 애들 Grid로 보여주기
-* Eject 했을때 깔끔하게 처리
-* Session List는 항상 보여주기 (fod debug)
-* Eject 후 Refresh 하면 Session List 남아있는 버그 수정
 -->
 
 <!DOCTYPE html>
@@ -54,7 +56,7 @@
     }
 
     .col-xs-4 {
-        padding-right: 1px;
+        padding-right: 0px;
         padding-left: 0px;
         padding-top: 1px;
     }
@@ -88,28 +90,47 @@
 
     <script>
         // window.username = Math.random() * 9999 << 9999;
-        var connection = new RTCMultiConnection();
+		var channelid = 'youbro';
+        var connection = new RTCMultiConnection(channelid);
         var sessionsList = document.getElementById('sessions-list');
 
+        // Media Setting
+        connection.session = {
+			audio: false,
+			video: true
+		};
+		connection.media.min(320, 240);
+		connection.leaveOnPageUnload = true;
+		connection.autoCloseEntireSession = true;
+		
         connection.onNewSession = function (session) {
+			console.log('connection.onNewSession', session);
+			// Room List 보여주기
             var tr = document.createElement('tr');
             tr.innerHTML = '<td class="text-center">' + session.extra.username + '</td>';
-            var td = document.createElement('td');
-            var button = document.createElement('button');
-            button.innerHTML = 'join';
-            td.appendChild(button);
+			//tr.innerHTML += '<td class="text-center"><button class="btn btn-info btn-sm" onclick="joinButtonClick()">Join</button></td>';
+			var td = document.createElement('td');
+			td.className = "text-center col-xs-4";
+            var btnJoin = document.createElement('button');
+            btnJoin.innerHTML = 'JOIN';
+			btnJoin.className = "btn btn-info btn-sm"
+			btnJoin.style = "width: 100%";
+            td.appendChild(btnJoin);
             tr.appendChild(td);
             sessionsList.insertBefore(tr, sessionsList.firstChild);
+			sessionsList.style.display = 'block';
 
-            button.onclick = function () {
+            btnJoin.onclick = function () {
                 if (!window.username) window.username = prompt('Please enter your username') || Math.random() * 9999 << 9999;
                 connection.extra = { username: window.username };
                 session.join();
 
+				document.getElementById('main-video-container').innerHTML = '';	// onstream에서 Remote를 받을때 처음오는 Moderator만 셋팅 하기 위해서
                 document.getElementById('start-new-session').disabled = true;
                 sessionsList.style.display = 'none';
             };
         };
+		
 
         // check if user is ejected
         // clear rooms-list if user is ejected
@@ -122,7 +143,8 @@
                 // Client 인 경우 자기 모습 다시 보여줌.
                 if (!connection.isInitiator) {
                     console.log("event.isEjected. Starting new session!");
-                    setTimeout(startNewSession, 1000);
+                    //setTimeout(startNewSession, 1000);
+					//setTimeout(onnection.connect(), 1000);
                 }
             }
         };
@@ -146,6 +168,7 @@
         }
 
         connection.onstream = function (stream) {
+			console.log('connection.onstream()' + stream);
             if (stream.type === 'local') {
                 var video = getVideo(stream, { username: window.username });
                 if (connection.isInitiator) {
@@ -162,15 +185,19 @@
                     var remoteVideosContainer = document.getElementById('remote-videos-container');
                     remoteVideosContainer.appendChild(video, remoteVideosContainer.firstChild);
                 } else {
-                    document.getElementById('main-video-container').innerHTML = video.outerHTML;
+					console.log("connection.onstream type=remote userid=" + stream.userid);
+					console.log("connection.onstream type=remote extra=", stream.extra);
+					if(document.getElementById('main-video-container').innerHTML === '')
+						document.getElementById('main-video-container').innerHTML = video.outerHTML;
                 }
             }
             //stream.mediaElement.width = innerWidth / 3.4;
         };
 
         connection.onstreamended = function (e) {
+			console.log('connection.onstreamended()', e);		
             if (e.mediaElement && e.mediaElement.parentNode && e.mediaElement.parentNode.parentNode) {
-                console.log(e.mediaElement.parentNode.outerHTML);
+                console.log("connection.onstreamended called! " + e.mediaElement.parentNode.outerHTML);
                 e.mediaElement.parentNode.parentNode.removeChild(e.mediaElement.parentNode);
             }
         };
@@ -211,8 +238,9 @@
             return div;
         }
 
-        // main
-        connection.connect();
+		// main
+		if(!connection.isInitiator)
+			connection.connect();
 
         // etc
         var isMobile = false; //initiate as false
