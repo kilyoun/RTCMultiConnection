@@ -6,6 +6,8 @@
 * Join randomly for rooms as swipe
 * Host page 처리 - Remote 접속하는 애들 Grid로 보여주기
 * Eject 했을때 깔끔하게 처리
+* Session List는 항상 보여주기 (fod debug)
+* Eject 후 Refresh 하면 Session List 남아있는 버그 수정
 -->
 
 <!DOCTYPE html>
@@ -29,24 +31,32 @@
         transition: all 1s ease;
         vertical-align: top;
         width: 100%;
+        z-index: 0;
     }       
   
+    .video-name {
+        margin-top: -20px;
+        margin-left: 5px;
+        z-index: 1;
+        position: absolute;
+        color: #F0F8FF;
+    }
+
     .eject {
-        background-image: url('https://www.webrtc-experiment.com/images/eject.png') !important;
-        background-position: center center !important;
-        background-repeat: no-repeat !important;
-        border-color: white;
-        border-radius: 0;
-        height: 30px;
+        border-radius: 15px;
+        height: 25px;
         margin: .2em;
         position: absolute;
-        width: 30px;
+        width: 25px;
         z-index: 200;
+        padding: 5px 1px;
+        font-size: 12px;
     }
 
     .col-xs-4 {
         padding-right: 1px;
         padding-left: 0px;
+        padding-top: 1px;
     }
     </style>
 
@@ -57,14 +67,18 @@
 <body>
     <div class="container body-content">
         <div class="row">
-            <button id="start-new-session" class="btn btn-primary">New Session</button>
+            <button id="start-new-session" class="btn btn-primary btn-block">New Session</button>
         </div>
         <div class="row">
-            <div id="local-video-container">
+            <div id="main-video-container">
             </div>
         </div>
         <div class="row">
             <div id="remote-videos-container">
+            </div>
+        </div>
+        <div class="row">
+            <div id="float-video-container" class="col-xs-4 pull-right">
             </div>
         </div>
         <div class="row">
@@ -75,11 +89,11 @@
     <script>
         // window.username = Math.random() * 9999 << 9999;
         var connection = new RTCMultiConnection();
-
         var sessionsList = document.getElementById('sessions-list');
+
         connection.onNewSession = function (session) {
             var tr = document.createElement('tr');
-            tr.innerHTML = '<td>' + session.extra.username + '</td>';
+            tr.innerHTML = '<td class="text-center">' + session.extra.username + '</td>';
             var td = document.createElement('td');
             var button = document.createElement('button');
             button.innerHTML = 'join';
@@ -88,11 +102,8 @@
             sessionsList.insertBefore(tr, sessionsList.firstChild);
 
             button.onclick = function () {
-                if (!window.username) window.username = prompt('Please enter your username') || 'Anonymous';
-
-                connection.extra = {
-                    username: window.username
-                };
+                if (!window.username) window.username = prompt('Please enter your username') || Math.random() * 9999 << 9999;
+                connection.extra = { username: window.username };
                 session.join();
 
                 document.getElementById('start-new-session').disabled = true;
@@ -103,13 +114,21 @@
         // check if user is ejected
         // clear rooms-list if user is ejected
         connection.onSessionClosed = function (event) {
+            console.log('connection.onSessionClosed' + event.extra.username);
             if (event.isEjected) {
                 sessionsList.innerHTML = '';
                 sessionsList.style.display = 'block';
+                
+                // Client 인 경우 자기 모습 다시 보여줌.
+                if (!connection.isInitiator) {
+                    console.log("event.isEjected. Starting new session!");
+                    setTimeout(startNewSession, 1000);
+                }
             }
         };
 
-        document.getElementById('start-new-session').onclick = function () {
+        document.getElementById('start-new-session').onclick = startNewSession;
+        function startNewSession() {
             if (!window.username) window.username = prompt('Please enter your username') || 'Anonymous';
 
             connection.extra = {
@@ -122,28 +141,36 @@
             connection.open();
 
             document.getElementById('start-new-session').disabled = true;
+            document.getElementById('start-new-session').innerHTML = window.username;
             sessionsList.style.display = 'none';
-        };
+        }
 
         connection.onstream = function (stream) {
             if (stream.type === 'local') {
-                var video = getVideo(stream, {
-                    username: window.username
-                });
-                document.getElementById('local-video-container').appendChild(video);
+                var video = getVideo(stream, { username: window.username });
+                if (connection.isInitiator) {
+                    document.getElementById('main-video-container').innerHTML = video.outerHTML;
+                } else {
+                    document.getElementById('float-video-container').innerHTML = video.outerHTML;
+                }
             }
 
             if (stream.type === 'remote') {
                 var video = getVideo(stream, stream.extra);
-                video.className += ' col-xs-4';  // Bootstrip Grid 시스템 (한줄에 3개씩)
-                var remoteVideosContainer = document.getElementById('remote-videos-container');
-                remoteVideosContainer.appendChild(video, remoteVideosContainer.firstChild);
+                if (connection.isInitiator) {
+                    video.className += ' col-xs-4';  // Bootstrip Grid 시스템 (한줄에 3개씩)
+                    var remoteVideosContainer = document.getElementById('remote-videos-container');
+                    remoteVideosContainer.appendChild(video, remoteVideosContainer.firstChild);
+                } else {
+                    document.getElementById('main-video-container').innerHTML = video.outerHTML;
+                }
             }
-            stream.mediaElement.width = innerWidth / 3.4;
+            //stream.mediaElement.width = innerWidth / 3.4;
         };
 
         connection.onstreamended = function (e) {
             if (e.mediaElement && e.mediaElement.parentNode && e.mediaElement.parentNode.parentNode) {
+                console.log(e.mediaElement.parentNode.outerHTML);
                 e.mediaElement.parentNode.parentNode.removeChild(e.mediaElement.parentNode);
             }
         };
@@ -157,8 +184,9 @@
             {
                 if (connection.isInitiator) {
                     var eject = document.createElement('button');
-                    eject.className = 'eject';
                     eject.title = 'Eject this User';
+                    eject.className = "btn btn-warning btn-circle eject";
+                    eject.innerHTML = "<i class='glyphicon glyphicon-remove'></i>"
 
                     eject.onclick = function () {
                         // eject a specific user
@@ -170,10 +198,12 @@
             }
 
             var video = stream.mediaElement;
+            video.controls = false; video.autoplay = true;
             div.appendChild(video);
             if (extra) {
                 video.title = extra.username;
-                var name = document.createElement('center');
+                var name = document.createElement('div');
+                name.className = 'video-name';
                 name.innerHTML = '<small>' + extra.username + '</small>';
                 div.appendChild(name);
             }
@@ -181,7 +211,19 @@
             return div;
         }
 
+        // main
         connection.connect();
+
+        // etc
+        var isMobile = false; //initiate as false
+        if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) isMobile = true;
+        console.log('navigator.userAgent=' + navigator.userAgent);
+        if (isMobile === false) {    // Desktop도 Mobile과 같은 Width로 맞춤
+            document.body.style.width = '400px';
+            var x = document.getElementsByClassName("container");
+            x[0].style.width = '400px';
+            console.log('ifMobile=false. document.body.style.width=' + document.body.style.width);
+        }
     </script>
 
 </body>
