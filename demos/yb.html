@@ -1,0 +1,344 @@
+<!--
+#### TODO
+* Show all participants
+-->
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <meta charset="utf-8">
+
+    <title>YB - WebRTC Scalable Media Broadcast using RTCMultiConnection</title>
+
+    <meta name="description" content="This module simply initializes socket.io and configures it in a way that single audio/video/screen stream can be shared/relayed over unlimited users without any bandwidth/CPU usage issues. Everything happens peer-to-peer!" />
+    <meta name="keywords" content="WebRTC,RTCMultiConnection,Demos,Experiments,Samples,Examples" />
+	<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap.min.css">    
+    <style>
+    audio,
+    video {
+        vertical-align: top;
+        width: 100%;
+        z-index: 0;
+    }       
+    #video-caption {
+        margin-top:  5px;
+        margin-left: 5px;
+        z-index: 1;
+        position: absolute;
+        color: #F0F8FF;
+		font-size: 12px;
+    }
+    </style>
+</head>
+
+<body>
+    <div class="container body-content">
+		<div class="row text-center bg-info">
+			<h5 id='status' >Scalable Broadcast</h5>
+		</div>
+		<div class="row text-center">
+            <input type="text" id="broadcast-id" placeholder="broadcast-id" value="room-yb">
+            <button id="open-or-join" class="btn btn-primary btn-sm">Open or Join Broadcast</button>
+		</div>
+		<div class="row">
+			<div id="video-caption"></div>
+            <video id="video-preview" controls loop autoplay></video>
+		</div>
+	</div>
+	
+	<script src="/socket.io/socket.io.js"></script>
+
+	<script>
+		// skipping xirsys servers
+		window.getExternalIceServers = false;
+	</script>
+	
+	<script src="/dist/rmc3.js"></script>
+	<!-- <script src="https://cdn.webrtc-experiment.com:443/rmc3.min.js"></script> -->
+
+	<script src="https://cdn.webrtc-experiment.com/RecordRTC.js"></script>
+	<script>
+	    // Only considering mobile env.
+        var isMobile = false; //initiate as false
+        if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) isMobile = true;
+        console.log('navigator.userAgent=' + navigator.userAgent);
+        if (isMobile === false) {    // Desktop도 Mobile과 같은 Width로 맞춤
+            document.body.style.width = '400px';
+            var x = document.getElementsByClassName("container");
+            x[0].style.width = '400px';
+            console.log('ifMobile=false. document.body.style.width=' + document.body.style.width);
+        }
+		
+		// WebRTC Part
+		var connection = new RTCMultiConnection(null, {
+			useDefaultDevices: true // if we don't need to force selection of specific devices
+		});
+		connection.enableScalableBroadcast = true;	// its mandatory in v3.0		
+		connection.maxRelayLimitPerUser = 2;		// each relaying-user should serve only 1 users
+		connection.autoCloseEntireSession = true;	// we don't need to keep room-opened scalable-broadcast.js will handle stuff itself.			
+		
+		// by default, socket.io server is assumed to be deployed on your own URL
+		connection.socketURL = '/';	
+		// comment-out below line if you do not have your own socket.io server
+		//connection.socketURL = 'https://rtcmulticonnection.herokuapp.com:443/';	
+
+		connection.socketMessageEvent = 'scalable-media-broadcast-demo';
+
+		// document.getElementById('broadcast-id').value = connection.userid;
+
+		// user need to connect server, so that others can reach him.
+		connection.connectSocket(function(socket) {
+			socket.on('logs', function(log) {
+				console.log('socket.on:', log);
+				var status = document.getElementById('status');
+				var msg = log.replace(/</g, '----').replace(/>/g, '___').replace(/----/g, '(<span style="color:red;">').replace(/___/g, '</span>)');
+				status.innerHTML = msg.replace(/are.*stream/g, '');
+			});
+
+			// this event is emitted when a broadcast is already created.
+			socket.on('join-broadcaster', function(hintsToJoinBroadcast) {
+				console.log('join-broadcaster', hintsToJoinBroadcast);
+
+				connection.session = hintsToJoinBroadcast.typeOfStreams;
+				connection.sdpConstraints.mandatory = {
+					OfferToReceiveVideo: !!connection.session.video,
+					OfferToReceiveAudio: !!connection.session.audio
+				};
+				connection.join(hintsToJoinBroadcast.userid);
+			});
+
+			socket.on('rejoin-broadcast', function(broadcastId) {
+				console.log('rejoin-broadcast', broadcastId);
+
+				connection.attachStreams = [];
+				socket.emit('check-broadcast-presence', broadcastId, function(isBroadcastExists) {
+					if(!isBroadcastExists) {
+						// the first person (i.e. real-broadcaster) MUST set his user-id
+						connection.userid = broadcastId;
+					}
+
+					socket.emit('join-broadcast', {
+						broadcastId: broadcastId,
+						userid: connection.userid,
+						typeOfStreams: connection.session
+					});
+				});
+			});
+
+			socket.on('broadcast-stopped', function(broadcastId) {
+				// alert('Broadcast has been stopped.');
+				// location.reload();
+				console.error('broadcast-stopped', broadcastId);
+				alert('This broadcast has been stopped.');
+			});
+
+			// this event is emitted when a broadcast is absent.
+			socket.on('start-broadcasting', function(typeOfStreams) {
+				console.log('start-broadcasting', typeOfStreams);
+
+				// host i.e. sender should always use this!
+				connection.sdpConstraints.mandatory = {
+					OfferToReceiveVideo: false,
+					OfferToReceiveAudio: false
+				};
+				connection.session = typeOfStreams;
+
+				// "open" method here will capture media-stream
+				// we can skip this function always; it is totally optional here.
+				// we can use "connection.getUserMediaHandler" instead
+				connection.open(connection.userid);
+			});
+		});
+
+		window.onbeforeunload = function() {
+			// Firefox is ugly.
+			document.getElementById('open-or-join').disabled = false;
+		};
+
+		var videoPreview = document.getElementById('video-preview');
+
+		connection.onstream = function(event) {
+			console.log('connection.onstream: ', event);
+			if(connection.isInitiator && event.type !== 'local') {
+				return;
+			}
+
+			if(event.mediaElement) {
+				event.mediaElement.pause();
+				delete event.mediaElement;
+			}
+
+			connection.isUpperUserLeft = false;
+			videoPreview.src = URL.createObjectURL(event.stream);
+			videoPreview.play();
+
+			videoPreview.userid = event.userid;
+
+			if(event.type === 'local') {
+				videoPreview.muted = true;
+			}
+
+			if (connection.isInitiator == false && event.type === 'remote') {
+				// he is merely relaying the media
+				connection.dontCaptureUserMedia = true;
+				connection.attachStreams = [event.stream];
+				connection.sdpConstraints.mandatory = {
+					OfferToReceiveAudio: false,
+					OfferToReceiveVideo: false
+				};
+
+				var socket = connection.getSocket();
+				socket.emit('can-relay-broadcast');
+
+				if(connection.DetectRTC.browser.name === 'Chrome') {
+					connection.getAllParticipants().forEach(function(p) {
+						console.log('peers', p);
+						if(p + '' != event.userid + '') {
+							var peer = connection.peers[p].peer;
+							peer.getLocalStreams().forEach(function(localStream) {
+								peer.removeStream(localStream);
+							});
+							peer.addStream(event.stream);
+							connection.dontAttachStream = true;
+							connection.renegotiate(p);
+							connection.dontAttachStream = false;
+						}
+					});
+				}
+
+				if(connection.DetectRTC.browser.name === 'Firefox') {
+					// Firefox is NOT supporting removeStream method
+					// that's why using alternative hack.
+					// NOTE: Firefox seems unable to replace-tracks of the remote-media-stream
+					// need to ask all deeper nodes to rejoin
+					connection.getAllParticipants().forEach(function(p) {
+						if(p + '' != event.userid + '') {
+							connection.replaceTrack(event.stream, p);
+						}
+					});
+				}
+
+				// Firefox seems UN_ABLE to record remote MediaStream
+				// WebAudio solution merely records audio
+				// so recording is skipped for Firefox.
+				if(connection.DetectRTC.browser.name === 'Chrome') {
+					// TODO: Recording 기능 일단 꺼 놓음
+					// repeatedlyRecordStream(event.stream);
+				}
+			}
+		};
+
+		// ask node.js server to look for a broadcast
+		// if broadcast is available, simply join it. i.e. "join-broadcaster" event should be emitted.
+		// if broadcast is absent, simply create it. i.e. "start-broadcasting" event should be fired.
+		document.getElementById('open-or-join').onclick = function() {
+			var broadcastId = document.getElementById('broadcast-id').value;
+			if (broadcastId.replace(/^\s+|\s+$/g, '').length <= 0) {
+				alert('Please enter broadcast-id');
+				document.getElementById('broadcast-id').focus();
+				return;
+			}
+
+			this.disabled = true;
+
+			connection.session = {
+				audio: false,	// TODO 일단 에코때문에 막음
+				video: true,
+				oneway: true
+			};
+
+			var socket = connection.getSocket();
+
+			socket.emit('check-broadcast-presence', broadcastId, function(isBroadcastExists) {
+				if(!isBroadcastExists) {
+					// the first person (i.e. real-broadcaster) MUST set his user-id
+					connection.userid = broadcastId;
+				}
+
+				console.log('check-broadcast-presence', broadcastId, isBroadcastExists);
+
+				socket.emit('join-broadcast', {
+					broadcastId: broadcastId,
+					userid: connection.userid,
+					typeOfStreams: connection.session
+				});
+			});
+		};
+
+		connection.onstreamended = function() {};
+
+		connection.onleave = function(event) {
+			if(event.userid !== videoPreview.userid) return;
+
+			var socket = connection.getSocket();
+			socket.emit('can-not-relay-broadcast');
+
+			connection.isUpperUserLeft = true;
+
+			if(allRecordedBlobs.length) {
+				// playing lats recorded blob
+				var lastBlob = allRecordedBlobs[allRecordedBlobs.length - 1];
+				videoPreview.src = URL.createObjectURL(lastBlob);
+				videoPreview.play();
+				allRecordedBlobs = [];
+			}
+			else if(connection.currentRecorder) {
+				var recorder = connection.currentRecorder;
+				connection.currentRecorder = null;
+				recorder.stopRecording(function() {
+					if(!connection.isUpperUserLeft) return;
+
+					videoPreview.src = URL.createObjectURL(recorder.blob);
+					videoPreview.play();
+				});
+			}
+
+			if(connection.currentRecorder) {
+				connection.currentRecorder.stopRecording();
+				connection.currentRecorder = null;
+			}
+		};
+
+		// [kykim] -----------------------------------------------------------
+		connection.onUserStatusChanged = function(event) {
+			console.log('connection.onUserStatusChanged:', event);
+			var caption = connection.getAllParticipants().join('<br>');
+			console.log('allParticipants = ', caption);
+			document.getElementById("video-caption").innerHTML = caption;
+		};
+		
+		// [RECORD] -----------------------------------------------------------
+		var allRecordedBlobs = [];
+		function repeatedlyRecordStream(stream) {
+			connection.currentRecorder = RecordRTC(stream, {
+				type: 'video'
+			});
+
+			connection.currentRecorder.startRecording();
+
+			setTimeout(function() {
+				if(connection.isUpperUserLeft || !connection.currentRecorder) {
+					return;
+				}
+
+				connection.currentRecorder.stopRecording(function() {
+					allRecordedBlobs.push(connection.currentRecorder.blob);
+
+					if(connection.isUpperUserLeft) {
+						return;
+					}
+
+					connection.currentRecorder = null;
+					repeatedlyRecordStream(stream);
+				});
+			}, 30 * 1000); // 30-seconds
+		};
+		
+	</script>
+
+</body>
+
+</html>
